@@ -361,16 +361,23 @@ function rulesMessageEmbeds() {
 
 async function dmRules(user) {
   const messages = rulesMessageEmbeds();
+
   for (const embeds of messages) {
-    try {
-      await user.send({ embeds });
-    } catch (e) {
-      console.warn(`[rules] Не удалось отправить правила ${user.id}: ${e.message}`);
-      return false;
+    for (const embed of embeds) {
+      try {
+        await user.send({ embeds: [embed] });
+      } catch (e) {
+        console.warn(
+          `[rules] Не удалось отправить правила ${user.id}: ${e.message}`
+        );
+        return false;
+      }
     }
   }
+
   return true;
 }
+
 
 async function sendRules(message) {
   if (config.rules?.enabled === false) return;
