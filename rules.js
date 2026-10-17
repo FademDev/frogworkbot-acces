@@ -99,11 +99,12 @@ const RULES = [
   }
 ];
 
-// Максимальная длина описания одного embed в Discord — 4096 символов.
-const DESCRIPTION_LIMIT = 3800;
-// Discord допускает максимум 10 embeds и 6000 суммарных символов на одно сообщение.
-const MESSAGE_EMBED_LIMIT = 10;
-const MESSAGE_CHAR_LIMIT = 5900;
+const DESCRIPTION_LIMIT = 3000;
+const MESSAGE_EMBED_LIMIT = 5;
+const MESSAGE_CHAR_LIMIT = 4500;
+
+
+
 
 function renderClause(sectionId, index, clause) {
   const id = `${sectionId}.${index + 1}`;
