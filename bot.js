@@ -450,7 +450,19 @@ async function completeRequest(interaction, requestId) {
   }
   if (config.notifications?.dm_member_on_completion !== false) {
     const user = await client.users.fetch(req.userId).catch(() => null);
-    if (user) await dmUser(user, replace(text('dm_completed'), { minecraft_nick: req.minecraftNick }));
+
+    if (user) {
+      const sent = await dmUser(
+       user,
+        replace(text('dm_completed'), {
+          minecraft_nick: req.minecraftNick
+        })
+     );
+
+      if (sent && config.rules?.enabled !== false) {
+       await dmRules(user);
+     }
+    }
   }
 }
 function panelModal(type) {
