@@ -2,6 +2,7 @@
   "bot": {
     "prefix": "!",
     "panel_command": "панель",
+    "rules_command": "правила",
     "language": "ru",
     "log_level": "info"
   },
@@ -58,6 +59,16 @@
     "save_after_every_change": true,
     "restore_pending_requests_on_start": true
   },
+  "rules": {
+    "enabled": true,
+    "cooldown_seconds": 100,
+    "aliases": [
+      "rules",
+      "правила"
+    ],
+    "delete_notice": true,
+    "notice_delete_after_ms": 5000
+  },
   "notifications": {
     "notify_all_admins": true,
     "skip_unavailable_admins": true,
@@ -82,6 +93,14 @@
     "free": "#2ECC71"
   },
   "buttons": {
+    "bulk_access": {
+      "label": "Выдать всем без проходки",
+      "emoji": "🎫"
+    },
+    "confirm_removed": {
+      "label": "Я удалил",
+      "emoji": "✅"
+    },
     "confirm_added": {
       "label": "Я добавил",
       "emoji": "✅"
@@ -108,6 +127,18 @@
     }
   },
   "messages": {
+    "role_gained_title": "Участник получил роль проходки",
+    "role_gained_description": "✅ Участник {user_mention} получил роль проходки.\n\n**Discord ID:** `{user_id}`\n**Имя:** {display_name}\n**Роль:** {role_names}\n\nБот отправил ему в личные сообщения просьбу ввести Minecraft Java-ник; ник будет проверен существующей проверкой.",
+    "role_lost_title": "Участник потерял все роли проходки",
+    "role_lost_description": "🚨 Участник {user_mention} потерял все роли проходки.\n\n**Discord ID:** `{user_id}`\n**Имя:** {display_name}\n**Снятые роли:** {role_names}\n\nЕсли игрок уже добавлен, удалите его из Minecraft whitelist и нажмите кнопку ниже.",
+    "role_removed_title": "Удаление из whitelist подтверждено",
+    "role_removed_description": "✅ {admin_mention} подтвердил: игрок {user_mention} удалён из Minecraft whitelist.",
+    "role_alert_not_found": "Это уведомление больше не найдено.",
+    "role_already_removed": "Удаление уже подтвердил {admin_mention}.",
+    "role_removed_confirmed": "Отметка сохранена, но сообщение не удалось обновить.",
+    "bulk_access_result": "Готово. Сообщение с просьбой ввести Minecraft-ник отправлено: {started}. Не удалось отправить: {failed}.",
+    "bulk_access_guild_error": "Не удалось найти настроенный сервер.",
+    "bulk_access_members_error": "Не удалось получить список участников сервера.",
     "dm_welcome": "Привет, {user_mention}! 🎉\n\nТебе выдана платная проходка на наш Minecraft-сервер!\n\nВведи свой Minecraft-ник. Разрешены латинские буквы, цифры и _. Мы проверим формат ника и отправим заявку администраторам для добавления в вайтлист.",
     "dm_nickname_prompt": "Введи свой Minecraft-ник сообщением в этот чат. Поддерживаются лицензированные и пиратские (offline-mode) серверы.",
     "nickname_invalid_format": "❌ Ник `{nickname}` имеет неправильный формат. Разрешены латинские буквы, цифры и _. Длина — от 3 до 16 символов. Попробуй ещё раз.",
@@ -140,7 +171,10 @@
     "custom_message_failed": "❌ Не удалось отправить сообщение. Возможно, у пользователя закрыты личные сообщения.",
     "generic_error": "⚠️ Произошла ошибка. Попробуй ещё раз или обратись к разработчику бота.",
     "bot_ready": "Бот запущен: {bot_tag}",
-    "admin_dm_failed": "⚠️ Не удалось доставить заявку администратору `{admin_id}`."
+    "admin_dm_failed": "⚠️ Не удалось доставить заявку администратору `{admin_id}`.",
+    "rules_sent": "📜 Правила отправлены тебе в личные сообщения.",
+    "rules_cooldown": "⏳ Правила уже были отправлены. Следующий запрос доступен через {time}.",
+    "rules_dm_failed": "⚠️ Не удалось отправить правила в личные сообщения. Разреши ЛС от участников сервера и попробуй снова."
   },
   "access_types": {
     "paid": {

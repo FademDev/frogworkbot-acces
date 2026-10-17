@@ -6,6 +6,7 @@ const {
   ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ModalBuilder,
   TextInputBuilder, TextInputStyle, Events
 } = require('discord.js');
+const { buildRulesMessages } = require('./rules.js');
 
 const ROOT = __dirname;
 const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
@@ -15,6 +16,8 @@ if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({ requ
 let store = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 if (!Array.isArray(store.requests)) store.requests = [];
 if (!store.sessions || typeof store.sessions !== 'object') store.sessions = {};
+if (!Array.isArray(store.roleAlerts)) store.roleAlerts = [];
+if (!store.cooldowns || typeof store.cooldowns !== 'object') store.cooldowns = {};
 let writeQueue = Promise.resolve();
 function saveStore() {
   writeQueue = writeQueue.then(async () => {
@@ -171,7 +174,12 @@ function panelComponents() {
     .setLabel('Статус проходок')
     .setEmoji('📋')
     .setStyle(ButtonStyle.Secondary);
-  return [new ActionRowBuilder().addComponents(select), new ActionRowBuilder().addComponents(statusButton)];
+  const bulkButton = new ButtonBuilder()
+    .setCustomId('panel:bulk_access')
+    .setLabel(config.buttons?.bulk_access?.label || 'Выдать проходку всем без неё')
+    .setEmoji(config.buttons?.bulk_access?.emoji || '🎫')
+    .setStyle(ButtonStyle.Primary);
+  return [new ActionRowBuilder().addComponents(select), new ActionRowBuilder().addComponents(statusButton, bulkButton)];
 }
 
 function getPassStatus(userId) {
@@ -242,6 +250,176 @@ async function showPassStatus(interaction) {
     );
   }
 }
+async function bulkStartMissingPassFlows(interaction) {
+  if (!isPanelAdmin(interaction.user.id)) {
+    return interaction.reply({ content: text('panel_no_permission'), ephemeral: true });
+  }
+  await interaction.deferReply({ ephemeral: true });
+  const guild = await client.guilds.fetch(String(config.discord?.guild_id)).catch(() => null);
+  if (!guild) return interaction.editReply(text('bulk_access_guild_error', 'Не удалось найти сервер.'));
+  const members = await guild.members.fetch().catch(err => {
+    console.error('[bulk access] member fetch:', err);
+    return null;
+  });
+  if (!members) return interaction.editReply(text('bulk_access_members_error', 'Не удалось получить список участников.'));
+
+  const roleTypes = config.discord?.role_access_types || {};
+  const targets = [...members.values()].filter(member =>
+    !member.user.bot && member.roles.cache.some(role => accessRoles.includes(role.id)) &&
+    !getPassStatus(member.id) && !hasActiveRequest(member.id)
+  );
+  let started = 0;
+  let failed = 0;
+  for (const member of targets) {
+    const roleId = accessRoles.find(id => member.roles.cache.has(id));
+    const type = roleTypes[roleId] === 'free' ? 'free' : 'paid';
+    if (await startNicknameFlow(member.id, type, 'role')) started++;
+    else failed++;
+  }
+  return interaction.editReply(replace(text('bulk_access_result', 'Готово. Сообщение с просьбой ввести Minecraft-ник отправлено: {started}. Не удалось отправить: {failed}.'), {
+    started, failed, total: targets.length
+  }));
+}
+
+async function notifyRoleAdmins(member, eventType, roleNames) {
+  const alertId = makeId();
+  const gained = eventType === 'gained';
+  const titleKey = gained ? 'role_gained_title' : 'role_lost_title';
+  const descriptionKey = gained ? 'role_gained_description' : 'role_lost_description';
+  const body = replace(text(descriptionKey, gained
+    ? 'Участник {user_mention} получил роль проходки: {role_names}.'
+    : 'Участник {user_mention} потерял все роли проходки ({role_names}). Проверьте и удалите его из Minecraft whitelist.'), {
+    user_mention: `<@${member.id}>`, user_id: member.id, username: member.user.username,
+    display_name: member.displayName, role_names: roleNames.join(', '), alert_id: alertId
+  });
+  const messageEmbed = embed(text(titleKey, gained ? 'Получена роль проходки' : 'Участник потерял проходку'), body,
+    gained ? (config.colors?.success || '#57F287') : (config.colors?.error || '#ED4245'));
+  const alert = { id: alertId, userId: String(member.id), type: eventType, status: gained ? 'NOTIFIED' : 'PENDING_REMOVAL',
+    createdAt: new Date().toISOString(), completedAt: null, completedBy: null, adminMessages: [] };
+  store.roleAlerts.push(alert);
+  await saveStore();
+  for (const adminId of ids(config.discord?.admin_ids)) {
+    try {
+      const user = await client.users.fetch(adminId);
+      const components = gained ? [] : [buttonRow(
+        `role_removed:${alertId}`, config.buttons?.confirm_removed?.label || 'Я удалил',
+        config.buttons?.confirm_removed?.emoji || '✅', ButtonStyle.Danger
+      )];
+      const sent = await user.send({ embeds: [messageEmbed], components });
+      alert.adminMessages.push({ userId: adminId, channelId: sent.channelId, messageId: sent.id });
+    } catch (e) { console.warn(`[role ${eventType} DM] ${adminId}: ${e.message}`); }
+  }
+  await saveStore();
+}
+
+async function confirmRoleRemoved(interaction, alertId) {
+  const alert = store.roleAlerts.find(item => item.id === alertId && item.type === 'lost');
+  if (!alert) return interaction.reply({ content: text('role_alert_not_found', 'Это уведомление уже не найдено.'), ephemeral: true });
+  if (!isAdmin(interaction.user.id)) return interaction.reply({ content: text('panel_no_permission'), ephemeral: true });
+  if (alert.status === 'REMOVED') return interaction.reply({ content: replace(text('role_already_removed', 'Удаление уже подтвердил {admin_mention}.'), { admin_mention: `<@${alert.completedBy}>` }), ephemeral: true });
+
+  alert.status = 'REMOVED';
+  alert.completedBy = interaction.user.id;
+  alert.completedAt = new Date().toISOString();
+  await saveStore();
+  const body = replace(text('role_removed_description', '✅ {admin_mention} подтвердил: игрок {user_mention} удалён из Minecraft whitelist.'), {
+    admin_mention: `<@${interaction.user.id}>`, user_mention: `<@${alert.userId}>`, user_id: alert.userId
+  });
+  const doneEmbed = embed(text('role_removed_title', 'Удаление из whitelist подтверждено'), body, config.colors?.success || '#57F287');
+  const disabledRow = buttonRow(`role_removed:${alert.id}`, config.buttons?.confirm_removed?.label || 'Я удалил', config.buttons?.confirm_removed?.emoji || '✅', ButtonStyle.Danger, true);
+  await interaction.update({ embeds: [doneEmbed], components: [disabledRow] }).catch(async () => {
+    await interaction.reply({ content: text('role_removed_confirmed', 'Отметка сохранена, но не удалось обновить сообщение.'), ephemeral: true }).catch(() => {});
+  });
+  for (const item of alert.adminMessages || []) {
+    if (item.messageId === interaction.message.id) continue;
+    try {
+      const user = await client.users.fetch(item.userId);
+      const channel = await user.createDM();
+      const msg = await channel.messages.fetch(item.messageId);
+      await msg.edit({ embeds: [doneEmbed], components: [disabledRow] });
+    } catch (e) { console.warn(`[edit role alert] ${item.userId}: ${e.message}`); }
+  }
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(1, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (minutes) parts.push(`${minutes} мин`);
+  if (seconds || !minutes) parts.push(`${seconds} с`);
+  return parts.join(' ');
+}
+
+// Отправляет правила в ЛС по частям, чтобы уложиться в лимиты Discord.
+function rulesMessageEmbeds() {
+  return buildRulesMessages().map(group => group.map(item => new EmbedBuilder()
+    .setColor(item.color)
+    .setTitle(item.title)
+    .setDescription(item.description)));
+}
+
+async function dmRules(user) {
+  const messages = rulesMessageEmbeds();
+  for (const embeds of messages) {
+    try {
+      await user.send({ embeds });
+    } catch (e) {
+      console.warn(`[rules] Не удалось отправить правила ${user.id}: ${e.message}`);
+      return false;
+    }
+  }
+  return true;
+}
+
+async function sendRules(message) {
+  if (config.rules?.enabled === false) return;
+  const userId = message.author.id;
+  const cooldownMs = Number(config.rules?.cooldown_seconds ?? 100) * 1000;
+  const remaining = (Number(store.cooldowns.rules?.[userId]) || 0) + cooldownMs - Date.now();
+  if (remaining > 0) {
+    await replyTemp(message, replace(text('rules_cooldown', 'Правила можно запросить снова через {time}.'), { time: formatDuration(remaining) }));
+    return;
+  }
+  const sent = await dmRules(message.author);
+  if (!sent) {
+    await replyTemp(message, text('rules_dm_failed', 'Не удалось отправить правила в личные сообщения.'));
+    return;
+  }
+  store.cooldowns.rules ??= {};
+  store.cooldowns.rules[userId] = Date.now();
+  await saveStore();
+  await replyTemp(message, text('rules_sent', 'Правила отправлены в личные сообщения.'));
+}
+
+// Короткий ответ в канале, который удаляется сам, чтобы не засорять чат.
+async function replyTemp(message, content) {
+  const notice = await message.reply(content).catch(() => null);
+  if (!notice || config.rules?.delete_notice === false) return notice;
+  setTimeout(() => notice.delete().catch(() => {}), Number(config.rules?.notice_delete_after_ms ?? 5000));
+  return notice;
+}
+
+async function handleRulesSlash(interaction) {
+  if (config.rules?.enabled === false) {
+    return interaction.reply({ content: text('rules_disabled', 'Правила сейчас недоступны.'), ephemeral: true });
+  }
+  const userId = interaction.user.id;
+  const cooldownMs = Number(config.rules?.cooldown_seconds ?? 100) * 1000;
+  const remaining = (Number(store.cooldowns.rules?.[userId]) || 0) + cooldownMs - Date.now();
+  if (remaining > 0) {
+    return interaction.reply({ content: replace(text('rules_cooldown', 'Правила можно запросить снова через {time}.'), { time: formatDuration(remaining) }), ephemeral: true });
+  }
+  const messages = rulesMessageEmbeds();
+  await interaction.reply({ embeds: messages[0], ephemeral: true });
+  for (const embeds of messages.slice(1)) {
+    await interaction.followUp({ embeds, ephemeral: true }).catch(err => console.warn('[rules] followUp:', err.message));
+  }
+  store.cooldowns.rules ??= {};
+  store.cooldowns.rules[userId] = Date.now();
+  await saveStore();
+}
+
 async function showPanel(message) {
   if (!isGuild(message.guildId)) return message.reply(text('panel_wrong_server'));
   if (!isPanelAdmin(message.author.id)) return message.reply(text('panel_no_permission'));
@@ -314,29 +492,66 @@ function panelModal(type) {
 
   return modal;
 }
-client.once(Events.ClientReady, c => console.log(replace(text('bot_ready', 'Бот запущен: {bot_tag}'), { bot_tag: c.user.tag })));
+async function registerRulesSlash() {
+  if (config.rules?.register_slash_command === false) return;
+  const guildId = String(config.discord?.guild_id || '');
+  if (!guildId) return;
+  try {
+    const guild = await client.guilds.fetch(guildId);
+    await guild.commands.create({
+      name: 'правила',
+      description: 'Показать правила проекта (видно только тебе)'
+    });
+    console.log('[rules] Slash-команда /правила зарегистрирована.');
+  } catch (e) {
+    console.warn(`[rules] Не удалось зарегистрировать slash-команду: ${e.message}`);
+  }
+}
+
+client.once(Events.ClientReady, c => {
+  console.log(replace(text('bot_ready', 'Бот запущен: {bot_tag}'), { bot_tag: c.user.tag }));
+  registerRulesSlash();
+});
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
   try {
-    if (!isGuild(newMember.guild.id) || config.flow?.auto_dm_on_role === false) return;
-    const gained = accessRoles.filter(id => !oldMember.roles.cache.has(id) && newMember.roles.cache.has(id));
-    if (!gained.length) return;
+    if (!isGuild(newMember.guild.id)) return;
+    const hadAccessRole = oldMember.roles.cache.some(role => accessRoles.includes(role.id));
+    const hasAccessRole = newMember.roles.cache.some(role => accessRoles.includes(role.id));
     const roleTypes = config.discord?.role_access_types || {};
-    // Автоматические роли предназначены только для платной проходки. Бесплатная выдаётся исключительно вручную через панель.
-    const type = gained.map(id => roleTypes[id]).find(v => v === 'paid') || 'paid';
-    await startNicknameFlow(newMember.id, type, 'role');
+    if (!hadAccessRole && hasAccessRole) {
+      const gained = accessRoles.filter(id => !oldMember.roles.cache.has(id) && newMember.roles.cache.has(id));
+      await notifyRoleAdmins(newMember, 'gained', gained.map(id => newMember.guild.roles.cache.get(id)?.name || id));
+      if (config.flow?.auto_dm_on_role !== false && !getPassStatus(newMember.id) && !hasActiveRequest(newMember.id)) {
+        const type = gained.map(id => roleTypes[id]).find(v => v === 'free') || 'paid';
+        await startNicknameFlow(newMember.id, type, 'role');
+      }
+    } else if (hadAccessRole && !hasAccessRole) {
+      const lost = accessRoles.filter(id => oldMember.roles.cache.has(id));
+      await notifyRoleAdmins(newMember, 'lost', lost.map(id => oldMember.guild.roles.cache.get(id)?.name || id));
+    }
   } catch (e) { console.error('[role update]', e); }
 });
 client.on(Events.MessageCreate, async message => {
   try {
     if (message.author.bot) return;
-    if (message.guild && message.content.trim().toLowerCase() === `${config.bot?.prefix || '!'}${config.bot?.panel_command || 'панель'}`) return await showPanel(message);
+    const content = message.content.trim().toLowerCase();
+    const prefix = config.bot?.prefix || '!';
+    const rulesAliases = [config.bot?.rules_command || 'правила', ...(config.rules?.aliases || [])].map(a => `${prefix}${String(a).toLowerCase()}`);
+    if (message.guild && rulesAliases.includes(content)) return await sendRules(message);
+    if (message.guild && content === `${prefix}${config.bot?.panel_command || 'панель'}`) return await showPanel(message);
     if (!message.guild) await handleNicknameMessage(message);
   } catch (e) { console.error('[message]', e); }
 });
 client.on(Events.InteractionCreate, async interaction => {
   try {
+    if (interaction.isChatInputCommand() && interaction.commandName === 'правила') {
+      return await handleRulesSlash(interaction);
+    }
     if (interaction.isButton() && interaction.customId === 'panel:pass_status') {
       return await showPassStatus(interaction);
+    }
+    if (interaction.isButton() && interaction.customId === 'panel:bulk_access') {
+      return await bulkStartMissingPassFlows(interaction);
     }
     if (interaction.isStringSelectMenu() && interaction.customId === 'panel:action') {
       if (!isPanelAdmin(interaction.user.id)) return interaction.reply({ content: text('panel_no_permission'), ephemeral: true });
@@ -383,6 +598,10 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton() && interaction.customId.startsWith('wl_done:')) {
       const requestId = interaction.customId.slice('wl_done:'.length);
       return await completeRequest(interaction, requestId);
+    }
+    if (interaction.isButton() && interaction.customId.startsWith('role_removed:')) {
+      const alertId = interaction.customId.slice('role_removed:'.length);
+      return await confirmRoleRemoved(interaction, alertId);
     }
   } catch (e) {
     console.error('[interaction]', e);
