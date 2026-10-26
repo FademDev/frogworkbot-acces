@@ -157,37 +157,52 @@ async function createRequest({ userId, minecraftNick, type, reason = '', source 
 
   const user = await client.users.fetch(String(userId)).catch(() => null);
 
-  if (config.rcon?.auto_whitelist !== false) {
-    const rcon = await executeWhitelistCommand(minecraftNick);
-    req.rconResult = { success: rcon.success, response: rcon.response, error: rcon.error, command: rcon.command, at: new Date().toISOString() };
+  try {
+    if (config.rcon?.auto_whitelist !== false) {
+      const rcon = await executeWhitelistCommand(minecraftNick);
+      req.rconResult = { success: rcon.success, response: rcon.response, error: rcon.error, command: rcon.command, at: new Date().toISOString() };
 
-    if (rcon.success) {
-      req.status = 'COMPLETED';
-      req.completedAt = new Date().toISOString();
-      req.completedBy = 'auto-rcon';
-      await saveStore();
-      await notifyAdminsAutoCompleted(req, rcon);
-      if (user) await dmUser(user, replace(text('request_created'), { minecraft_nick: minecraftNick, request_id: req.id }));
+      if (rcon.success) {
+        req.status = 'COMPLETED';
+        req.completedAt = new Date().toISOString();
+        req.completedBy = 'auto-rcon';
+        await saveStore();
+        try { await notifyAdminsAutoCompleted(req, rcon); } catch (e) { console.error('[notifyAdminsAutoCompleted]', e); }
+        if (user) await dmUser(user, replace(text('request_created'), { minecraft_nick: minecraftNick, request_id: req.id }));
+        return req;
+      }
+
+      if (config.rcon?.manual_review_on_rcon_fail) {
+        req.status = 'PENDING_REVIEW';
+        await saveStore();
+        try { await notifyAdminsManualReview(req, rcon.error || 'rcon_failed', rcon.response); } catch (e) { console.error('[notifyAdminsManualReview]', e); }
+      } else {
+        try { await notifyAdmins(req); } catch (e) { console.error('[notifyAdmins]', e); }
+      }
+      if (user) await dmUser(user, replace(text('request_pending_review', 'Заявка принята, но автоматическое добавление не удалось. Администратор проверит её вручную: `{minecraft_nick}`'), { minecraft_nick: minecraftNick }));
       return req;
     }
 
-    if (config.rcon?.manual_review_on_rcon_fail) {
-      req.status = 'PENDING_REVIEW';
-      await saveStore();
-      await notifyAdminsManualReview(req, rcon.error || 'rcon_failed', rcon.response);
-    } else {
-      await notifyAdmins(req);
-    }
-    if (user) await dmUser(user, replace(text('request_pending_review', 'Заявка принята, но автоматическое добавление не удалось. Администратор проверит её вручную: `{minecraft_nick}`'), { minecraft_nick: minecraftNick }));
+    await notifyAdmins(req);
+    if (user) await dmUser(user, replace(text('request_created'), { minecraft_nick: minecraftNick, request_id: req.id }));
     return req;
+  } catch (e) {
+    req.status = 'FAILED';
+    req.failedAt = new Date().toISOString();
+    req.failReason = e.message || 'unknown';
+    await saveStore();
+    throw e;
   }
-
-  await notifyAdmins(req);
-  if (user) await dmUser(user, replace(text('request_created'), { minecraft_nick: minecraftNick, request_id: req.id }));
-  return req;
 }
 function hasActiveRequest(userId) {
-  return store.requests.some(r => r.userId === String(userId) && ['PENDING_NICKNAME', 'VALIDATING', 'PENDING_WHITELIST'].includes(r.status));
+  const now = Date.now();
+  const staleMs = 10 * 60 * 1000; // 10 минут — если заявка висит дольше, считаем её "зависшей"
+  return store.requests.some(r => {
+    if (r.userId !== String(userId)) return false;
+    if (!['PENDING_NICKNAME', 'VALIDATING', 'PENDING_WHITELIST', 'PENDING_REVIEW'].includes(r.status)) return false;
+    if (['PENDING_WHITELIST', 'PENDING_REVIEW'].includes(r.status) && r.createdAt && (now - new Date(r.createdAt).getTime()) > staleMs) return false;
+    return true;
+  });
 }
 function getSession(userId) { return store.sessions[String(userId)] || null; }
 async function setSession(userId, session) { store.sessions[String(userId)] = session; await saveStore(); }
@@ -264,7 +279,13 @@ async function handleNicknameMessage(message) {
     return true;
   }
   await clearSession(message.author.id);
-  await createRequest({ userId: message.author.id, minecraftNick: normalized, type: session.type, reason: session.reason, source: session.source, createdBy: session.createdBy });
+  try {
+    await createRequest({ userId: message.author.id, minecraftNick: normalized, type: session.type, reason: session.reason, source: session.source, createdBy: session.createdBy });
+  } catch (e) {
+    console.error('[createRequest]', e);
+    await dmUser(message.author, text('generic_error', 'Произошла ошибка при создании заявки. Попробуй позже.'));
+    return true;
+  }
   return true;
 }
 
@@ -316,17 +337,21 @@ async function sendRconCommand(command) {
   const retries = Math.max(0, Number(rconCfg.retries) || 0);
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    let client;
+    let client = null;
+    let connected = false;
     try {
       client = new Rcon({ host, port, password, timeout });
       await client.connect();
+      connected = true;
       const response = await client.send(command);
       return { ok: true, response: String(response ?? '').trim(), error: null };
     } catch (e) {
       if (attempt === retries) return { ok: false, response: null, error: e.message || 'rcon_error' };
       await sleep(500 * (attempt + 1));
     } finally {
-      try { if (client) client.end(); } catch {}
+      if (client && connected) {
+        try { await client.end(); } catch {}
+      }
     }
   }
   return { ok: false, response: null, error: 'rcon_retries_exhausted' };
@@ -627,7 +652,7 @@ async function completeRequest(interaction, requestId) {
   if (!req) return interaction.reply({ content: 'Заявка не найдена.', ephemeral: true });
   if (!isAdmin(interaction.user.id)) return interaction.reply({ content: text('panel_no_permission'), ephemeral: true });
   if (req.status === 'COMPLETED') return interaction.reply({ content: replace(text('request_already_completed'), { admin_mention: `<@${req.completedBy}>` }), ephemeral: true });
-  if (req.status !== 'PENDING_WHITELIST') return interaction.reply({ content: 'Эта заявка больше не ожидает подтверждения.', ephemeral: true });
+  if (!['PENDING_WHITELIST', 'PENDING_REVIEW'].includes(req.status)) return interaction.reply({ content: 'Эта заявка больше не ожидает подтверждения.', ephemeral: true });
   // Synchronous status change before any awaits prevents two button clicks completing the same request.
   req.status = 'COMPLETED'; req.completedBy = interaction.user.id; req.completedAt = new Date().toISOString();
   await saveStore();
