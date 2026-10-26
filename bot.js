@@ -48,9 +48,44 @@ function embed(title, description, color = config.colors?.primary || '#5865F2') 
 function buttonRow(customId, label, emoji, style = ButtonStyle.Success, disabled = false) {
   return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(style).setDisabled(disabled).setEmoji(emoji || undefined));
 }
-async function dmUser(user, content) {
-  try { await user.send(content); return true; }
-  catch (e) { console.warn(`[dm] Не удалось написать ${user.id}: ${e.message}`); return false; }
+// Задержка с ожиданием между ретраями, учитывающая rate-limit Discord (429).
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// Отправка ЛС с ретраями. Обрабатывает rate-limit (429 Retry-After) и транзиентные
+// ошибки сети, чтобы бот не "протупливал" и не терял сообщения при временных сбоях.
+// Не ретраится, только если пользователь запретил ЛС (DiscordError 50007) — это бессмысленно.
+async function dmUser(user, content, { retries = 3 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    if (attempt > 1) {
+      const backoff = 1000 * Math.pow(2, attempt - 2);
+      console.warn(`[dm] Повторная попытка написать ${user.id} (попытка ${attempt}/${retries}) через ${backoff} мс.`);
+      await sleep(backoff);
+    }
+    try {
+      await user.send(content);
+      return true;
+    } catch (e) {
+      lastError = e;
+      // Rate-limit: ждём столько, сколько попросил Discord.
+      if (e?.code === 429 || e?.status === 429) {
+        const waitMs = Number(e?.retryAfter) * 1000 || 5000;
+        console.warn(`[dm] Rate-limit при ЛС ${user.id}: жду ${waitMs} мс.`);
+        await sleep(waitMs);
+        continue;
+      }
+      // Пользователь запретил ЛС или пользователь не найден — ретраить бессмысленно.
+      if (e?.code === 50007 || e?.code === 10013 || e?.code === 50035) {
+        console.warn(`[dm] Не удалось написать ${user.id} (ЛС недоступны): ${e.message}`);
+        return false;
+      }
+      // Другие ошибки (сеть, 5xx, таймауты) — пробуем ещё раз.
+      if (attempt === retries) {
+        console.warn(`[dm] Не удалось написать ${user.id} после ${retries} попыток: ${e.message}`);
+      }
+    }
+  }
+  return false;
 }
 async function notifyAdmins(req) {
   const body = replace(text('admin_request_description'), {
