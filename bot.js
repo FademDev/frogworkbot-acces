@@ -140,15 +140,21 @@ async function notifyAdminsManualReview(req, reason, rconResponse) {
     access_type: accessLabel(req.type), reason: reason || '—', rcon_response: rconResponse || '—', request_id: req.id
   });
   const message = embed(title, body, config.colors?.warning || '#FEE75C');
+  const row = buttonRow(`wl_done:${req.id}`, config.buttons?.confirm_added?.label || 'Я добавил', config.buttons?.confirm_added?.emoji || '✅');
+  req.adminMessages = [];
   for (const adminId of ids(config.discord?.admin_ids)) {
     try {
       const user = await client.users.fetch(adminId);
-      await user.send({ embeds: [message] });
+      const sent = await user.send({ embeds: [message], components: [row] });
+      req.adminMessages.push({ userId: adminId, channelId: sent.channelId, messageId: sent.id });
     } catch (e) {
       console.warn(`[manual review DM] ${adminId}: ${e.message}`);
     }
   }
+  await saveStore();
 }
+
+
 async function createRequest({ userId, minecraftNick, type, reason = '', source = 'role', createdBy = null }) {
   const req = { id: makeId(), userId: String(userId), minecraftNick, type, reason, source, createdBy,
     status: 'PENDING_WHITELIST', createdAt: new Date().toISOString(), completedAt: null, completedBy: null, adminMessages: [] };

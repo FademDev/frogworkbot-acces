@@ -50,7 +50,7 @@
     "command_template": "zwl add {nick}",
     "success_keywords": ["добавлен", "added", "whitelist", "уже"],
     "failure_keywords": ["already", "ошибка", "error", "not found", "unknown command"],
-    "auto_whitelist": true,
+    "auto_whitelist": false,
     "manual_review_on_rcon_fail": true,
     "dry_run": false
   },
