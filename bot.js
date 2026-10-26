@@ -7,6 +7,7 @@ const {
   TextInputBuilder, TextInputStyle, Events
 } = require('discord.js');
 const { buildRulesMessages } = require('./rules.js');
+const { Rcon } = require('rcon-client');
 
 const ROOT = __dirname;
 const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
@@ -108,13 +109,80 @@ async function notifyAdmins(req) {
   await saveStore();
   if (!req.adminMessages.length) console.warn(`[request ${req.id}] Ни одному администратору не удалось доставить сообщение.`);
 }
+
+async function notifyAdminsAutoCompleted(req, rconResult) {
+  const title = text('admin_auto_added_title', '✅ Игрок автоматически добавлен в вайтлист');
+  const body = replace(text('admin_auto_added_description',
+    'Бот выполнил команду на сервере.\n\n**Discord:** {user_mention}\n**Discord ID:** `{user_id}`\n**Minecraft ник:** `{minecraft_nick}`\n**Тип:** {access_type}\n**Источник:** {source}\n**Команда:** `{command}`\n**Ответ:** `{response}`\n**Заявка:** `{request_id}`'), {
+    user_mention: `<@${req.userId}>`, user_id: req.userId, minecraft_nick: req.minecraftNick,
+    access_type: accessLabel(req.type), source: req.source === 'role' ? 'Выдача по роли' : 'Ручная выдача',
+    command: rconResult.command || '—', response: rconResult.response || '—', request_id: req.id
+  });
+  const message = embed(title, body, config.colors?.success || '#57F287')
+    .setFooter({ text: replace(text('admin_request_footer', 'Заявка {request_id}'), { request_id: req.id }) });
+  for (const adminId of ids(config.discord?.admin_ids)) {
+    try {
+      const user = await client.users.fetch(adminId);
+      const sent = await user.send({ embeds: [message] });
+      req.adminMessages.push({ userId: adminId, channelId: sent.channelId, messageId: sent.id });
+    } catch (e) {
+      console.warn(`[admin DM auto] ${adminId}: ${e.message}`);
+    }
+  }
+  await saveStore();
+}
+
+async function notifyAdminsManualReview(req, reason, rconResponse) {
+  const title = text('admin_manual_review_title', '⚠️ Требуется ручное добавление в вайтлист');
+  const body = replace(text('admin_manual_review_description',
+    'Автоматическое добавление не удалось.\n\n**Discord:** {user_mention}\n**Discord ID:** `{user_id}`\n**Minecraft ник:** `{minecraft_nick}`\n**Тип:** {access_type}\n**Причина:** {reason}\n**Ответ сервера:** `{rcon_response}`\n**Заявка:** `{request_id}`'), {
+    user_mention: `<@${req.userId}>`, user_id: req.userId, minecraft_nick: req.minecraftNick,
+    access_type: accessLabel(req.type), reason: reason || '—', rcon_response: rconResponse || '—', request_id: req.id
+  });
+  const message = embed(title, body, config.colors?.warning || '#FEE75C');
+  for (const adminId of ids(config.discord?.admin_ids)) {
+    try {
+      const user = await client.users.fetch(adminId);
+      await user.send({ embeds: [message] });
+    } catch (e) {
+      console.warn(`[manual review DM] ${adminId}: ${e.message}`);
+    }
+  }
+}
 async function createRequest({ userId, minecraftNick, type, reason = '', source = 'role', createdBy = null }) {
   const req = { id: makeId(), userId: String(userId), minecraftNick, type, reason, source, createdBy,
     status: 'PENDING_WHITELIST', createdAt: new Date().toISOString(), completedAt: null, completedBy: null, adminMessages: [] };
   store.requests.push(req);
   await saveStore();
-  await notifyAdmins(req);
+
   const user = await client.users.fetch(String(userId)).catch(() => null);
+
+  if (config.rcon?.auto_whitelist !== false) {
+    const rcon = await executeWhitelistCommand(minecraftNick);
+    req.rconResult = { success: rcon.success, response: rcon.response, error: rcon.error, command: rcon.command, at: new Date().toISOString() };
+
+    if (rcon.success) {
+      req.status = 'COMPLETED';
+      req.completedAt = new Date().toISOString();
+      req.completedBy = 'auto-rcon';
+      await saveStore();
+      await notifyAdminsAutoCompleted(req, rcon);
+      if (user) await dmUser(user, replace(text('request_created'), { minecraft_nick: minecraftNick, request_id: req.id }));
+      return req;
+    }
+
+    if (config.rcon?.manual_review_on_rcon_fail) {
+      req.status = 'PENDING_REVIEW';
+      await saveStore();
+      await notifyAdminsManualReview(req, rcon.error || 'rcon_failed', rcon.response);
+    } else {
+      await notifyAdmins(req);
+    }
+    if (user) await dmUser(user, replace(text('request_pending_review', 'Заявка принята, но автоматическое добавление не удалось. Администратор проверит её вручную: `{minecraft_nick}`'), { minecraft_nick: minecraftNick }));
+    return req;
+  }
+
+  await notifyAdmins(req);
   if (user) await dmUser(user, replace(text('request_created'), { minecraft_nick: minecraftNick, request_id: req.id }));
   return req;
 }
@@ -162,6 +230,10 @@ async function startNicknameFlow(userId, type = 'free', source = 'role', created
   return true;
 }
 async function validateMinecraftNick(nick) {
+  // Базовый фильтр по запрещённым словам/паттернам — до проверки формата.
+  const filter = checkNicknameFilter(nick);
+  if (!filter.ok) return { ok: false, reason: 'filtered' };
+
   const pattern = new RegExp(config.minecraft?.nickname_pattern || '^[A-Za-z0-9_]{3,16}$');
   if (!pattern.test(nick)) return { ok: false, reason: 'format' };
   if (!config.minecraft?.check_profile_exists) return { ok: true };
@@ -182,18 +254,101 @@ async function handleNicknameMessage(message) {
   if (nick.length > 100) { await dmUser(message.author, text('nickname_invalid_format')); return true; }
   const check = await validateMinecraftNick(nick);
   if (!check.ok) {
-    const key = check.reason === 'format' ? 'nickname_invalid_format' : check.reason === 'not_found' ? 'nickname_profile_not_found' : 'nickname_check_failed';
+    const key = check.reason === 'format' ? 'nickname_invalid_format' : check.reason === 'not_found' ? 'nickname_profile_not_found' : check.reason === 'filtered' ? 'nickname_filtered' : 'nickname_check_failed';
     await dmUser(message.author, replace(text(key), { nickname: nick }));
     return true;
   }
   const normalized = nick;
-  if (config.flow?.prevent_duplicate_minecraft_nick && store.requests.some(r => r.minecraftNick.toLowerCase() === normalized.toLowerCase() && ['PENDING_WHITELIST', 'COMPLETED'].includes(r.status))) {
+  if (config.flow?.prevent_duplicate_minecraft_nick && store.requests.some(r => r.minecraftNick.toLowerCase() === normalized.toLowerCase() && ['PENDING_WHITELIST', 'COMPLETED', 'PENDING_REVIEW'].includes(r.status))) {
     await dmUser(message.author, text('nickname_already_used', 'Этот Minecraft-ник уже указан в другой заявке. Обратись к администратору, если это ошибка.'));
     return true;
   }
   await clearSession(message.author.id);
   await createRequest({ userId: message.author.id, minecraftNick: normalized, type: session.type, reason: session.reason, source: session.source, createdBy: session.createdBy });
   return true;
+}
+
+function checkNicknameFilter(nick) {
+  const filter = config.nickname_filter || {};
+  if (filter.enabled === false) return { ok: true };
+
+  const raw = String(nick).toLowerCase();
+  const stripped = raw.replace(/[^a-z0-9]/g, '');
+
+  const terms = Array.isArray(filter.terms) ? filter.terms.map(t => String(t).toLowerCase()) : [];
+  const blocked = Array.isArray(filter.blocked_usernames) ? filter.blocked_usernames.map(t => String(t).toLowerCase()) : [];
+  const patterns = Array.isArray(filter.reserved_patterns) ? filter.reserved_patterns : [];
+
+  if (blocked.includes(raw)) return { ok: false, reason: 'exact' };
+
+  for (const term of terms) {
+    if (!term) continue;
+    if (raw.includes(term)) return { ok: false, reason: 'term' };
+    if (filter.strip_separator_check !== false && stripped.includes(term.replace(/[^a-z0-9]/g, ''))) {
+      return { ok: false, reason: 'stripped_term' };
+    }
+  }
+
+  for (const pat of patterns) {
+    try {
+      const rx = new RegExp(pat, 'i');
+      if (rx.test(raw) || rx.test(stripped)) return { ok: false, reason: 'pattern' };
+    } catch (e) {
+      console.warn(`[nickname filter] Некорректный паттерн "${pat}": ${e.message}`);
+    }
+  }
+  return { ok: true };
+}
+
+// Отправка команды на сервер через RCON (minecraft-protocol).
+async function sendRconCommand(command) {
+  const rconCfg = config.rcon || {};
+  if (rconCfg.enabled === false) return { ok: false, error: 'rcon_disabled' };
+  if (rconCfg.dry_run) return { ok: true, response: 'dry_run', error: null };
+
+  const passwordEnv = rconCfg.password_env || 'RCON_PASSWORD';
+  const password = process.env[passwordEnv];
+  if (!password) return { ok: false, error: `no_${passwordEnv.toLowerCase()}` };
+
+  const host = rconCfg.host || '127.0.0.1';
+  const port = Number(rconCfg.port) || 25575;
+  const timeout = Number(rconCfg.timeout_ms) || 8000;
+  const retries = Math.max(0, Number(rconCfg.retries) || 0);
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let client;
+    try {
+      client = new Rcon({ host, port, password, timeout });
+      await client.connect();
+      const response = await client.send(command);
+      return { ok: true, response: String(response ?? '').trim(), error: null };
+    } catch (e) {
+      if (attempt === retries) return { ok: false, response: null, error: e.message || 'rcon_error' };
+      await sleep(500 * (attempt + 1));
+    } finally {
+      try { if (client) client.end(); } catch {}
+    }
+  }
+  return { ok: false, response: null, error: 'rcon_retries_exhausted' };
+}
+
+async function executeWhitelistCommand(nick) {
+  const template = String(config.rcon?.command_template || 'whitelist add {nick}');
+  const command = template.replace(/\{nick\}/g, nick);
+  const { ok, response, error } = await sendRconCommand(command);
+
+  if (!ok) return { success: false, response: null, error, command };
+
+  const lower = (response || '').toLowerCase();
+  const successKeywords = config.rcon?.success_keywords || [];
+  const failureKeywords = config.rcon?.failure_keywords || [];
+
+  const matchedFail = failureKeywords.find(k => lower.includes(String(k).toLowerCase()));
+  if (matchedFail) return { success: false, response, error: `keyword:${matchedFail}`, command };
+
+  const matchedOk = successKeywords.find(k => lower.includes(String(k).toLowerCase()));
+  // Если сервер молчит — считаем, что команда прошла.
+  return { success: matchedOk !== undefined || !response, response, error: null, command };
 }
 function panelEmbed() {
   return embed(text('panel_title', 'Панель управления проходками'), text('panel_description', 'Выбери действие.'));

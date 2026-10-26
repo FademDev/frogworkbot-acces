@@ -40,6 +40,49 @@
     "profile_check_timeout_ms": 10000,
     "profile_check_retries": 2
   },
+  "rcon": {
+    "enabled": true,
+    "host": "87.228.74.140",
+    "port": 25594,
+    "password_env": "RCON_PASSWORD",
+    "timeout_ms": 8000,
+    "retries": 1,
+    "command_template": "zwl add {nick}",
+    "success_keywords": ["добавлен", "added", "whitelist", "уже"],
+    "failure_keywords": ["already", "ошибка", "error", "not found", "unknown command"],
+    "auto_whitelist": true,
+    "manual_review_on_rcon_fail": true,
+    "dry_run": false
+  },
+  "nickname_filter": {
+    "enabled": true,
+    "case_insensitive": true,
+    "strip_separator_check": true,
+    "terms": [
+      "hitler",
+      "nazi",
+      "admin",
+      "moderator",
+      "helper",
+      "owner",
+      "support"
+    ],
+    "blocked_usernames": [
+      "Notch",
+      "jeb_",
+      "Dinnerbone",
+      "Herobrine"
+    ],
+    "reserved_patterns": [
+      "^adm",
+      "^mod",
+      "^staff",
+      "^helper",
+      "^owner",
+      "^admin",
+      "^moder"
+    ]
+  },
   "flow": {
     "auto_dm_on_role": true,
     "require_dm_reply": true,
@@ -176,7 +219,13 @@
     "admin_dm_failed": "⚠️ Не удалось доставить заявку администратору `{admin_id}`.",
     "rules_sent": "📜 Правила отправлены тебе в личные сообщения.",
     "rules_cooldown": "⏳ Правила уже были отправлены. Следующий запрос доступен через {time}.",
-    "rules_dm_failed": "⚠️ Не удалось отправить правила в личные сообщения. Разреши ЛС от участников сервера и попробуй снова."
+    "rules_dm_failed": "⚠️ Не удалось отправить правила в личные сообщения. Разреши ЛС от участников сервера и попробуй снова.",
+    "nickname_filtered": "❌ Ник `{nickname}` запрещён правилами сервера. Выбери другой ник и попробуй ещё раз.",
+    "request_pending_review": "⏳ Заявка принята, но автоматическое добавление не удалось. Администратор проверит её вручную: `{minecraft_nick}`",
+    "admin_auto_added_title": "✅ Игрок автоматически добавлен в вайтлист",
+    "admin_auto_added_description": "Бот выполнил команду на сервере.\n\n**Discord:** {user_mention}\n**Discord ID:** `{user_id}`\n**Minecraft ник:** `{minecraft_nick}`\n**Тип:** {access_type}\n**Источник:** {source}\n**Команда:** `{command}`\n**Ответ:** `{response}`\n**Заявка:** `{request_id}`",
+    "admin_manual_review_title": "⚠️ Требуется ручное добавление в вайтлист",
+    "admin_manual_review_description": "Автоматическое добавление не удалось.\n\n**Discord:** {user_mention}\n**Discord ID:** `{user_id}`\n**Minecraft ник:** `{minecraft_nick}`\n**Тип:** {access_type}\n**Причина:** {reason}\n**Ответ сервера:** `{rcon_response}`\n**Заявка:** `{request_id}`"
   },
   "access_types": {
     "paid": {
