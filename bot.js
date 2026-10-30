@@ -1281,13 +1281,22 @@ async function handlePanelSlash(interaction) {
     ephemeral: true
   });
 }
+// Текстовая команда остаётся рабочей как резервный вариант: она показывает ту же
+// эфемерную панель, если slash-команда ещё не успела зарегистрироваться или Discord
+// не обновил список команд. Используем общий объект ответа, чтобы кнопки работали одинаково.
+
 
 // [!]панель оставлен только как подсказка: меню вызывается слеш-командой,
 // чтобы его видел лишь тот администратор, который его открыл.
 async function showPanelLegacy(message) {
   if (!isGuild(message.guildId)) return replyTemp(message, text('panel_wrong_server'));
   if (!isPanelAdmin(message.author.id)) return replyTemp(message, text('panel_no_permission'));
-  return replyTemp(message, text('panel_use_slash', `Панель вызывается командой \`/${panelCommandName()}\` — это видно только тебе.`));
+  if (config.panel?.enabled === false) return replyTemp(message, 'Панель отключена в конфиге.');
+  const session = (store.panelSessions[message.author.id] ||= {});
+  session.openedAt = Date.now();
+  session.channelId = message.channelId;
+  await saveStore();
+  return message.reply({ embeds: [panelEmbed(message.author.id)], components: panelComponents() });
 }
 async function completeRequest(interaction, requestId) {
   const req = store.requests.find(r => r.id === requestId);
@@ -1524,9 +1533,15 @@ function panelCommandName() {
 
 // Регистрирует /панель. Команда эфемерная: её видит только тот, кто вызвал.
 async function registerPanelSlash() {
-  if (config.panel?.register_slash_command === false) return;
+  if (config.panel?.register_slash_command === false) {
+    console.warn('[panel] Регистрация slash-команды отключена в config.json (panel.register_slash_command=false).');
+    return;
+  }
   const guildId = String(config.discord?.guild_id || '');
-  if (!guildId) return;
+  if (!guildId) {
+    console.warn('[panel] Не удалось зарегистрировать slash-команду: в config.json не задан discord.guild_id.');
+    return;
+  }
   const name = panelCommandName();
   try {
     const guild = await client.guilds.fetch(guildId);
