@@ -19,12 +19,10 @@
       "1546157688415584336": "paid"
     },
     "admin_ids": [
-      "1027434824580997130",
-      "293800463059517451"
+      "1027434824580997130"
     ],
     "panel_admin_ids": [
-      "1027434824580997130",
-      "293800463059517451"
+      "1027434824580997130"
     ],
     "role_check": {
       "mode": "any",
@@ -40,18 +38,67 @@
     "profile_check_timeout_ms": 10000,
     "profile_check_retries": 2
   },
+  "panel": {
+    "enabled": true,
+    "register_slash_command": true,
+    "require_manage_guild": false,
+    "ephemeral": true,
+    "legacy_prefix_command": false
+  },
+  "votes": {
+    "enabled": true,
+    "anonymous": true,
+    "allow_abstain": true,
+    "max_options": 10,
+    "default_minutes": 30,
+    "default_audience": "everyone",
+    "dm_delay_ms": 250,
+    "auto_close_check_seconds": 60
+  },
   "rcon": {
     "enabled": true,
     "host": "87.228.74.140",
-    "port": 25594,
+    "port": 25746,
     "password_env": "RCON_PASSWORD",
     "timeout_ms": 8000,
     "retries": 1,
     "command_template": "zwl add {nick}",
-    "success_keywords": ["добавлен", "added", "whitelist", "уже"],
-    "failure_keywords": ["already", "ошибка", "error", "not found", "unknown command"],
-    "auto_whitelist": false,
+    "auto_fallback_port": true,
+    "alternative_ports": [
+      25746,
+      25577,
+      25575
+    ],
+    "debug": {
+      "enabled": false,
+      "verbose": false
+    },
+    "probe_command": "list",
+    "success_keywords": [
+      "added",
+      "добавлен",
+      "already whitelisted",
+      "уже в белом"
+    ],
+    "failure_keywords": [
+      "error",
+      "ошибка",
+      "unknown command",
+      "неизвестная команда",
+      "unknown player",
+      "that player does not exist",
+      "no player was found",
+      "not found",
+      "does not exist",
+      "could not",
+      "cannot",
+      "unable",
+      "invalid"
+    ],
+    "vanilla_command_template": "whitelist add {nick}",
+    "auto_whitelist": true,
     "manual_review_on_rcon_fail": true,
+    "remove_command_template": "zwl remove {nick}",
     "dry_run": false
   },
   "nickname_filter": {

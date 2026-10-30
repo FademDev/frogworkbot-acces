@@ -12,6 +12,13 @@
 5. В Discord Developer Portal включи **Server Members Intent** и **Message Content Intent**.
 6. Запусти `npm start`.
 
+## RCON whitelist и /zwl
+- Slash-команда `/zwl add nick:<ник>` добавляет Java-ник через RCON командой `config.json` → `rcon.command_template` (по умолчанию `zwl add {nick}`).
+- Пароль считывается из `.env` по имени `rcon.password_env` (сейчас `RCON_PASSWORD`). Не публикуй `.env`.
+- Команда ограничена пользователями из `discord.panel_admin_ids`; ник проверяется до отправки RCON-команды.
+- Для личных сообщений включи **Direct Messages** и **Message Content** intents, а для обнаружения ролей — **Server Members Intent** в Discord Developer Portal.
+
+
 ## Выдача проходок
 - `discord.access_role_ids` — перечисление всех ролей, выдача любой из которых автоматически запускает процесс платной проходки.
 - `discord.role_access_types` — сопоставление каждой такой роли со значением `paid`. Бесплатные роли сюда добавлять не нужно.
@@ -28,7 +35,7 @@
 - `discord.panel_admin_ids` — кто может использовать `!панель`.
 
 ## Примечания
-- Бот не добавляет игрока в whitelist самостоятельно: администратор добавляет игрока в Minecraft, затем нажимает кнопку подтверждения.
+- Бот автоматически добавляет ник из заявки через RCON, если `rcon.auto_whitelist` включён. Для ручного добавления администратором доступна команда `/zwl add nick:<ник>`.
 - Не публикуй `.env` и не отправляй токен другим людям.
 
 ## Правила проекта

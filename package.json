@@ -6,7 +6,11 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "node --watch bot.js"
+    "dev": "node --watch bot.js",
+    "test": "node tests/whitelist-utils.test.js && node tests/rcon-logic.test.js && node tests/bot-smoke.test.js",
+    "test:whitelist": "node tests/whitelist-utils.test.js",
+    "test:live": "node tests/live-rcon.test.js",
+    "rcon:check": "node tests/rcon-cli.js"
   },
   "engines": {
     "node": ">=22"

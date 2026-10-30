@@ -1,0 +1,21 @@
+start 2026-10-27T20:18:17.335Z
+tcp probing 25746
+tcp 25746 {"port":25746,"ms":387,"ok":true}
+auth 25746 {"port":25746,"auth":true,"code":"ok"}
+tcp probing 25594
+tcp 25594 {"port":25594,"ms":403,"ok":true}
+--- 2026-10-27T20:19:09.673Z
+CMD {"port":25746,"cmd":" list","ok":false,"code":"auth_failed"}
+CMD {"port":25746,"cmd":"whitelist list","ok":false,"code":"auth_failed"}
+CMD {"port":25746,"cmd":"zwl list","ok":false,"code":"auth_failed"}
+rcon-client connect OK
+SEND list => "There are 3 of a max of 15 players online: C_Steam, Uzai4ik, __AmaZonkA__\n"
+SEND whitelist list => "There are 5 whitelisted player(s): Fox_NoName, Fadem, Fox_Noname, Fox_Noname, Fadem\n"
+SEND zwl list => "There are 15 whitelisted player(s): [Uzai4ik, Totamota, Mangrov_4455, Ptelale, monsto_1231, DanMJ1, C_Steam, KlaimP_, Pander34, Giper_pon, Fadem, __AmaZonkA__, egor228, Fox_Noname, BreVerEdit52]\n"
+  
+rcon-client connect OK
+SEND "whitelist add Test1" => "Added Test1 to the whitelist\n"
+SEND "whitelist add Test1" => "Player is already whitelisted\n"
+SEND "zwl add Test2" => "Added Test2 to the whitelist\n"
+SEND "whitelist list" => "There are 6 whitelisted player(s): Fox_NoName, Test1, Fadem, Fox_Noname, Fox_Noname, Fadem\n"
+SEND "zwl list" => "There are 16 whitelisted player(s): [Uzai4ik, Totamota, Mangrov_4455, Ptelale, monsto_1231, Test2, DanMJ1, C_Steam, KlaimP_, Pander34, Giper_pon, Fadem, __AmaZonkA__, egor228, Fox_Noname, BreVerEdit52]\n"

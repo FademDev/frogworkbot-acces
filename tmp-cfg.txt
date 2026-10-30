@@ -1,0 +1,6 @@
+panel={"enabled":true,"register_slash_command":true,"require_manage_guild":false,"ephemeral":true,"legacy_prefix_command":false}
+votes={"enabled":true,"anonymous":true,"allow_abstain":true,"max_options":10,"default_minutes":30,"default_audience":"everyone","dm_delay_ms":250,"auto_close_check_seconds":60}
+rcon.port=25746
+rcon.auto_whitelist=true
+rcon.debug={"enabled":false,"verbose":false}
+success_keywords=["added","добавлен","already whitelisted","уже в белом"]
